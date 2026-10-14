@@ -138,6 +138,67 @@ def test_store_chatindex(db):
     assert topic_content["messages"][0]["content"] == "Hello"
 
 
+# ChatIndex's own CTree.to_dict() + saved conversation (save_conversation=True).
+SAMPLE_CTREE = {
+    "max_children": 5,
+    "total_messages": 4,
+    "tree": {
+        "type": "topic", "topic_name": "ROOT", "summary": "", "start_index": 0, "end_index": 4,
+        "children": [
+            {"type": "topic", "topic_name": "Boilers", "summary": "Boiler questions", "start_index": 0,
+             "end_index": 4, "children": [
+                 {"type": "message", "message_index": 0, "user": "Hi", "assistant": "Hello"},
+                 {"type": "message", "message_index": 2, "user": "Pressure?", "assistant": "200 psi"},
+             ]},
+        ],
+    },
+    "conversation": [
+        {"role": "user", "content": "Hi"}, {"role": "assistant", "content": "Hello"},
+        {"role": "user", "content": "Pressure?"}, {"role": "assistant", "content": "200 psi"},
+    ],
+}
+
+
+def test_store_ctree_dict(db):
+    tree_id = db.store(SAMPLE_CTREE, format="chatindex", meta={"conversation_id": "c1"})
+    root_id = db.tree_info(tree_id)["root_node_id"]
+    children = db.get_children(tree_id, root_id)
+    assert len(children) == 1
+    assert children[0]["attrs"]["title"] == "Boilers"
+    assert children[0]["attrs"]["msg_start"] == 0 and children[0]["attrs"]["msg_end"] == 3
+    topic = db.get_content(tree_id, children[0]["node_id"])
+    assert [m["content"] for m in topic["messages"]] == ["Hi", "Hello", "Pressure?", "200 psi"]
+
+
+def test_store_ctree_dict_without_conversation_uses_previews(db):
+    data = {k: v for k, v in SAMPLE_CTREE.items() if k != "conversation"}
+    tree_id = db.store(data, format="chatindex")
+    root_id = db.tree_info(tree_id)["root_node_id"]
+    topic = db.get_content(tree_id, db.get_children(tree_id, root_id)[0]["node_id"])
+    assert topic["messages"][2] == {"role": "user", "content": "Pressure?"}
+
+
+def test_llm_client_passes_completion_kwargs(monkeypatch):
+    import litellm
+
+    from contextdb.llm import LLMClient
+
+    seen = {}
+
+    def fake_completion(**kwargs):
+        seen.update(kwargs)
+        msg = SimpleNamespace(content="ok", tool_calls=None)
+        return SimpleNamespace(choices=[SimpleNamespace(message=msg, finish_reason="stop")], usage=None)
+
+    monkeypatch.setattr(litellm, "completion", fake_completion)
+    llm = LLMClient("openai", api_key="k", model="claude-haiku-4-5",
+                    api_base="http://gateway:8787/v1", extra_headers={"x-portkey-provider": "anthropic"})
+    assert llm.chat([{"role": "user", "content": "hi"}])["content"][0]["text"] == "ok"
+    assert seen["api_base"] == "http://gateway:8787/v1"
+    assert seen["extra_headers"] == {"x-portkey-provider": "anthropic"}
+    assert seen["api_key"] == "k" and seen["model"] == "openai/claude-haiku-4-5"
+
+
 def test_delete_chatindex_tree_cleans_entities(db):
     tree_id = db.store(SAMPLE_CHATINDEX, format="chatindex")
     cur = db.storage.conn.cursor()

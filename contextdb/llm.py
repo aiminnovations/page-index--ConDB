@@ -211,12 +211,16 @@ def _resolve_litellm_model(provider: str, model: str = None) -> str:
 # ── LLMClient ─────────────────────────────────────────────────────
 
 class LLMClient:
-    def __init__(self, provider: str = "anthropic", api_key: str = None, model: str = None):
+    def __init__(self, provider: str = "anthropic", api_key: str = None, model: str = None, **completion_kwargs):
+        """``completion_kwargs`` (e.g. ``api_base``, ``extra_headers``) go to every
+        ``litellm.completion`` call, so a client can target an OpenAI-compatible gateway
+        without setting process-wide environment variables."""
         import litellm
         self._litellm = litellm
         self.provider = provider
         self.model = _resolve_litellm_model(provider, model)
         self._api_key = api_key
+        self._completion_kwargs = completion_kwargs
 
         # Suppress litellm's verbose logging by default
         litellm.suppress_debug_info = True
@@ -224,10 +228,10 @@ class LLMClient:
         logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 
     def _call(self, **kwargs) -> Any:
-        """Central litellm.completion call, injects api_key if set."""
+        """Central litellm.completion call, injects api_key and the client's completion kwargs."""
         if self._api_key:
             kwargs["api_key"] = self._api_key
-        return self._litellm.completion(**kwargs)
+        return self._litellm.completion(**{**self._completion_kwargs, **kwargs})
 
     def chat(
         self,

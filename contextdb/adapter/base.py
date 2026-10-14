@@ -81,8 +81,52 @@ class DocumentTreeAdapter(BaseAdapter):
 PageIndexAdapter = DocumentTreeAdapter
 
 
+def _from_ctree(data: dict[str, Any]) -> dict[str, Any]:
+    """ChatIndex's own ``CTree.to_dict()`` shape -> this adapter's ``topics`` shape.
+
+    ``CTree.to_dict()`` is ``{"total_messages", "tree": {"type": "topic", "topic_name",
+    "summary", "start_index", "end_index" (exclusive), "children": [topic | message]}}``;
+    ``CTree.save(..., save_conversation=True)`` adds the full ``conversation``. Message nodes
+    carry ``message_index`` (first message of the exchange) and 200-char previews, used only
+    when the conversation is absent. Node ids are the topic's path, e.g. ``"0.1"``.
+    """
+    conversation = data.get("conversation") or []
+
+    def exchange(msg: dict[str, Any]) -> list[dict[str, Any]]:
+        out = []
+        for m in conversation[msg.get("message_index", 0):msg.get("message_index", 0) + 3]:
+            out.append(m)
+            if m.get("role") == "assistant":
+                break
+        return out or [{"role": "user", "content": msg.get("user", "")},
+                       {"role": "assistant", "content": msg.get("assistant", "")}]
+
+    def topic(node: dict[str, Any], path: str) -> dict[str, Any]:
+        kids = node.get("children") or []
+        return {
+            "node_id": path,
+            "title": node.get("topic_name"),
+            "summary": node.get("summary", ""),
+            "msg_start": node.get("start_index"),
+            "msg_end": max(node.get("end_index", 0) - 1, node.get("start_index", 0)),
+            "messages": [m for c in kids if c.get("type") == "message" for m in exchange(c)],
+            "subtopics": [topic(c, f"{path}.{i}") for i, c in enumerate(kids) if c.get("type") == "topic"],
+        }
+
+    root = data["tree"]
+    return {
+        "conversation_id": data.get("conversation_id"),
+        "participants": data.get("participants"),
+        "topics": [topic(c, str(i)) for i, c in enumerate(root.get("children") or []) if c.get("type") == "topic"],
+    }
+
+
 class ChatIndexAdapter(BaseAdapter):
+    """Accepts the ``topics`` shape below, or ChatIndex's ``CTree.to_dict()`` (see ``_from_ctree``)."""
+
     def convert(self, chatindex_json: dict[str, Any]) -> tuple[dict[str, Any], dict[str, dict[str, Any]]]:
+        if "tree" in chatindex_json and "topics" not in chatindex_json:
+            chatindex_json = _from_ctree(chatindex_json)
         entities = {}
         root_entity_id = "__root__"
         conversation_title = chatindex_json.get("conversation_id") or "Conversation"

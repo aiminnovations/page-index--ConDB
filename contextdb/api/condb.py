@@ -79,8 +79,8 @@ class ConDB:
     # ── LLM ─────────────────────────────────────────────────────────
 
     def set_llm(self, *, provider: str = "anthropic", api_key: str = None,
-                model: str = None, llm: LLMProtocol = None):
-        self._llm = llm or LLMClient(provider=provider, api_key=api_key, model=model)
+                model: str = None, llm: LLMProtocol = None, **completion_kwargs):
+        self._llm = llm or LLMClient(provider=provider, api_key=api_key, model=model, **completion_kwargs)
 
     def _resolve_llm(self, llm=None, provider=None, api_key=None, model=None) -> LLMProtocol:
         """per-query llm= > per-query provider= > set_llm() default."""
